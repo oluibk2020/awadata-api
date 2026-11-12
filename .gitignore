@@ -1,0 +1,8 @@
+node_modules
+.env
+.env.development
+.env.example
+/storage/sponsors.json
+/dist
+/extension/dist
+.codex-temp

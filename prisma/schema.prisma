@@ -1,0 +1,429 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PLATFORM_ADMIN
+  RESEARCHER
+  PARTICIPANT
+  COMMUNITY_ADMIN
+  GOVERNANCE_MEMBER
+  AUDITOR
+}
+
+enum MembershipRole {
+  MEMBER
+  ADMIN
+  GOVERNANCE_MEMBER
+}
+
+enum DatasetStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ConsentStatus {
+  ACTIVE
+  WITHDRAWN
+  EXPIRED
+  SUPERSEDED
+}
+
+enum ConsentPermissionType {
+  ACADEMIC_RESEARCH
+  PUBLIC_HEALTH_RESEARCH
+  COMMERCIAL_RESEARCH
+  AI_MODEL_TRAINING
+  IDENTIFIABLE_DATA
+  AGGREGATE_DATA
+  THIRD_PARTY_SHARING
+}
+
+enum ConsentOperation {
+  ACADEMIC_AGGREGATE_RESEARCH
+  IDENTIFIABLE_RECORD_ACCESS
+  COMMERCIAL_AI_TRAINING
+}
+
+enum ResearchPurpose {
+  ACADEMIC
+  PUBLIC_HEALTH
+  COMMERCIAL
+  AI_TRAINING
+  OTHER
+}
+
+enum DataOperation {
+  AGGREGATE_ANALYSIS
+  RECORD_LEVEL_ANALYSIS
+  IDENTIFIABLE_ACCESS
+  EXPORT
+  MODEL_TRAINING
+  THIRD_PARTY_SHARING
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum GovernanceOutcome {
+  APPROVED
+  REJECTED
+  CONDITIONAL
+}
+
+enum GrantStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum AuditAction {
+  USER_LOGIN
+  CONSENT_CREATED
+  CONSENT_WITHDRAWN
+  RESEARCH_REQUEST_CREATED
+  GOVERNANCE_DECISION_RECORDED
+  ACCESS_GRANTED
+  ACCESS_DENIED
+  DATA_ACCESS_EXECUTED
+  GRANT_REVOKED
+  BENEFIT_DELIVERY_RECORDED
+}
+
+enum AuditEventType {
+  RESEARCH_REQUEST_SUBMITTED
+  GOVERNANCE_DECISION_RECORDED
+  CONSENT_WITHDRAWN
+  ACCESS_AUTHORIZATION_ALLOWED
+  ACCESS_AUTHORIZATION_DENIED
+  DATA_ACCESS_EXECUTED
+  DATA_ACCESS_EXECUTION_DENIED
+  BENEFIT_AGREEMENT_CREATED
+  BENEFIT_AGREEMENT_UPDATED
+}
+
+enum AuditOutcome {
+  ALLOWED
+  DENIED
+  SUCCESS
+  FAILURE
+}
+
+enum BenefitStatus {
+  PENDING
+  IN_PROGRESS
+  DELIVERED
+  CANCELLED
+}
+
+enum BenefitAgreementStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  COMMITTED
+  FULFILLED
+  CANCELLED
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         UserRole @default(PARTICIPANT)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // 2FA fields
+  isBanned Boolean @default(false)
+  twoFactorSecret String?           // TOTP secret
+  twoFactorEnabled Boolean @default(false)
+  twoFactorBackupCodes String[]     // Backup codes as JSON
+  participantProfile Participant?
+
+  memberships      CommunityMembership[]
+  researchRequests ResearchRequest[]
+  governanceVotes  GovernanceDecision[]
+  accessGrants     AccessGrant[]
+  auditEvents      AuditEvent[]
+  createdConsents  Consent[]             @relation("ConsentRecordedBy")
+  benefitAgreements        BenefitAgreement[]
+  acceptedBenefitAgreements BenefitAgreement[] @relation("BenefitAgreementAcceptedBy")
+}
+
+model Organisation {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now())
+
+  researchRequests ResearchRequest[]
+}
+
+model Community {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  country     String
+  region      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships  CommunityMembership[]
+  datasets     Dataset[]
+  participants Participant[]
+  decisions    GovernanceDecision[]
+  benefitAgreements BenefitAgreement[]
+}
+
+model CommunityMembership {
+  id          String         @id @default(uuid()) @db.Uuid
+  userId      String         @db.Uuid
+  communityId String         @db.Uuid
+  role        MembershipRole @default(MEMBER)
+  joinedAt    DateTime       @default(now())
+
+  user      User      @relation(fields: [userId], references: [id])
+  community Community @relation(fields: [communityId], references: [id])
+
+  @@unique([userId, communityId])
+}
+
+model Dataset {
+  id          String        @id @default(uuid()) @db.Uuid
+  communityId String        @db.Uuid
+  name        String
+  description String?
+  version     Int           @default(1)
+  status      DatasetStatus @default(DRAFT)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  community    Community         @relation(fields: [communityId], references: [id])
+  participants Participant[]
+  consents     Consent[]
+  requests     ResearchRequest[]
+  grants       AccessGrant[]
+  auditEvents  AuditEvent[]
+  syntheticObservations SyntheticObservation[]
+
+  @@unique([communityId, name, version])
+}
+
+model SyntheticObservation {
+  id                    String      @id @default(uuid()) @db.Uuid
+  datasetId             String      @db.Uuid
+  participantId         String      @db.Uuid
+  wellbeingScore        Int
+  sleepQualityScore     Int
+  stressLevelScore      Int
+  createdAt             DateTime    @default(now())
+
+  dataset    Dataset    @relation(fields: [datasetId], references: [id])
+  participant Participant @relation(fields: [participantId], references: [id])
+
+  @@unique([datasetId, participantId])
+  @@index([datasetId])
+}
+
+model Participant {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String?  @unique @db.Uuid
+  communityId String   @db.Uuid
+  datasetId   String   @db.Uuid
+  subjectCode String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User?     @relation(fields: [userId], references: [id])
+  community Community @relation(fields: [communityId], references: [id])
+  dataset   Dataset   @relation(fields: [datasetId], references: [id])
+  consents  Consent[]
+  syntheticObservations SyntheticObservation[]
+
+  @@unique([communityId, subjectCode])
+  @@index([datasetId])
+}
+
+model Consent {
+  id            String        @id @default(uuid()) @db.Uuid
+  participantId String        @db.Uuid
+  datasetId     String        @db.Uuid
+  recordedById  String?       @db.Uuid
+  purpose       ResearchPurpose
+  version       Int           @default(1)
+  status        ConsentStatus @default(ACTIVE)
+  consentedAt   DateTime      @default(now())
+  expiresAt     DateTime?
+  withdrawnAt   DateTime?
+  createdAt     DateTime      @default(now())
+
+  participant Participant         @relation(fields: [participantId], references: [id])
+  dataset     Dataset             @relation(fields: [datasetId], references: [id])
+  recordedBy  User?               @relation("ConsentRecordedBy", fields: [recordedById], references: [id])
+  permissions ConsentPermission[]
+
+  @@index([participantId, datasetId, status])
+}
+
+model ConsentPermission {
+  id         String                @id @default(uuid()) @db.Uuid
+  consentId  String                @db.Uuid
+  permission ConsentPermissionType
+  operation  ConsentOperation      @default(ACADEMIC_AGGREGATE_RESEARCH)
+  allowed    Boolean
+
+  consent Consent @relation(fields: [consentId], references: [id], onDelete: Cascade)
+
+  @@unique([consentId, permission])
+  @@unique([consentId, operation])
+}
+
+model ResearchRequest {
+  id                  String          @id @default(uuid()) @db.Uuid
+  researcherId        String          @db.Uuid
+  organisationId      String?         @db.Uuid
+  datasetId           String          @db.Uuid
+  title               String
+  description         String
+  purpose             ResearchPurpose
+  status              RequestStatus   @default(PENDING)
+  requestedOperations DataOperation[]
+  requestedConsentOperations ConsentOperation[]
+  proposedExpiry     DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  researcher       User                 @relation(fields: [researcherId], references: [id])
+  organisation     Organisation?        @relation(fields: [organisationId], references: [id])
+  dataset          Dataset              @relation(fields: [datasetId], references: [id])
+  decisions        GovernanceDecision[]
+  grants           AccessGrant[]
+  benefitAgreements BenefitAgreement[]
+  auditEvents      AuditEvent[]
+
+  @@index([datasetId, status])
+  @@index([researcherId])
+}
+
+model GovernanceDecision {
+  id                String            @id @default(uuid()) @db.Uuid
+  researchRequestId String            @db.Uuid
+  communityId       String            @db.Uuid
+  decisionMakerId   String            @db.Uuid
+  outcome           GovernanceOutcome
+  reason            String
+  approvedOperations ConsentOperation[]
+  conditions        Json?
+  policyVersion     Int
+  createdAt         DateTime          @default(now())
+
+  researchRequest ResearchRequest @relation(fields: [researchRequestId], references: [id])
+  community       Community       @relation(fields: [communityId], references: [id])
+  decisionMaker   User            @relation(fields: [decisionMakerId], references: [id])
+
+  @@unique([researchRequestId])
+  @@index([researchRequestId, createdAt])
+}
+
+model AccessGrant {
+  id                String          @id @default(uuid()) @db.Uuid
+  researchRequestId String          @db.Uuid
+  researcherId      String          @db.Uuid
+  datasetId         String          @db.Uuid
+  operations        DataOperation[]
+  status            GrantStatus     @default(ACTIVE)
+  startsAt          DateTime        @default(now())
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  createdAt         DateTime        @default(now())
+
+  researchRequest ResearchRequest @relation(fields: [researchRequestId], references: [id])
+  researcher      User            @relation(fields: [researcherId], references: [id])
+  dataset         Dataset         @relation(fields: [datasetId], references: [id])
+
+  @@index([researcherId, datasetId, status])
+}
+
+model AuditEvent {
+  id                String           @id @default(uuid()) @db.Uuid
+  actorId           String?          @db.Uuid
+  action            AuditAction
+  eventType         AuditEventType
+  outcome           AuditOutcome
+  reasonCode        String?
+  resource          String
+  resourceId        String?
+  researchRequestId String?          @db.Uuid
+  datasetId         String?          @db.Uuid
+  operation         ConsentOperation?
+  metadata          Json?
+  occurredAt        DateTime         @default(now())
+
+  actor           User?            @relation(fields: [actorId], references: [id])
+  researchRequest ResearchRequest? @relation(fields: [researchRequestId], references: [id])
+  dataset         Dataset?         @relation(fields: [datasetId], references: [id])
+
+  @@index([resource, resourceId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([researchRequestId, occurredAt])
+  @@index([datasetId, occurredAt])
+}
+
+model BenefitAgreement {
+  id                    String                @id @default(uuid()) @db.Uuid
+  researchRequestId     String                @db.Uuid
+  version               Int                   @default(1)
+  communityId           String                @db.Uuid
+  researcherId          String                @db.Uuid
+  description           String
+  commitmentDate        DateTime              @default(now())
+  status                BenefitAgreementStatus @default(PENDING)
+  acceptedById          String?               @db.Uuid
+  acceptedAt            DateTime?
+  rejectionReason       String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  researchRequest ResearchRequest @relation(fields: [researchRequestId], references: [id])
+  community       Community       @relation(fields: [communityId], references: [id])
+  researcher      User            @relation(fields: [researcherId], references: [id])
+  acceptedBy      User?           @relation("BenefitAgreementAcceptedBy", fields: [acceptedById], references: [id])
+
+  deliveries BenefitDelivery[]
+
+  @@unique([researchRequestId, version])
+  @@index([researchRequestId, status, version])
+}
+
+model BenefitDelivery {
+  id                 String        @id @default(uuid()) @db.Uuid
+  benefitAgreementId String        @db.Uuid
+  description        String
+  status             BenefitStatus @default(PENDING)
+  dueAt              DateTime?
+  deliveredAt        DateTime?
+  evidenceReference  String?
+  createdAt          DateTime      @default(now())
+
+  agreement BenefitAgreement @relation(fields: [benefitAgreementId], references: [id])
+}
